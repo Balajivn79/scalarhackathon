@@ -1,0 +1,132 @@
+name: traffic-signal-env
+version: 1.0.0
+description: >
+  A real-world adaptive traffic signal control environment where an AI agent
+  manages a 4-way intersection by dynamically adjusting green light timing
+  to minimize congestion, reduce wait times, and prioritize emergency vehicles.
+
+author: Balaji Vellineni, Sasikumar Duraisamy, Rohith Srivatsan
+license: MIT
+tags:
+  - openenv
+  - traffic
+  - urban-computing
+  - sequential-decision-making
+  - emergency-response
+
+environment:
+  type: sequential
+  stochastic: true
+  real_world_domain: urban traffic management
+
+endpoints:
+  reset:
+    method: POST
+    path: /reset
+    description: Initialize a new episode. Pass task as query param.
+    params:
+      task:
+        type: string
+        enum: [easy, medium, hard]
+        default: easy
+
+  step:
+    method: POST
+    path: /step
+    description: Take one action and advance the simulation by one tick.
+    body:
+      action:
+        type: string
+        enum:
+          - keep
+          - switch_to_N
+          - switch_to_S
+          - switch_to_E
+          - switch_to_W
+          - extend_green
+          - pedestrian_hold
+          - bundle_NS
+          - bundle_EW
+
+  state:
+    method: GET
+    path: /state
+    description: Return the current environment state without advancing.
+
+observation_space:
+  north:
+    cars: integer
+    avg_wait: float
+  south:
+    cars: integer
+    avg_wait: float
+  east:
+    cars: integer
+    avg_wait: float
+  west:
+    cars: integer
+    avg_wait: float
+  current_green:
+    type: string
+    enum: [N, S, E, W]
+  time_in_phase: integer
+  emergency_lane:
+    type: string
+    nullable: true
+    enum: [N, S, E, W]
+  pedestrian_requests:
+    type: array
+    items: string
+  pedestrian_active: boolean
+  pedestrian_ticks_remaining: integer
+  time_of_day:
+    type: string
+    enum: [NORMAL, PEAK_HOUR, NIGHT]
+  tick: integer
+
+reward_space:
+  total: float
+  breakdown:
+    throughput: float
+    queue: float
+    max_wait: float
+    starvation: float
+    fairness: float
+    emergency: float
+
+tasks:
+  - id: easy
+    description: >
+      Normal traffic flow with steady vehicle arrival rates.
+      Agent must keep average wait times below 30s with no lane starvation.
+    difficulty: 1
+    episode_length: 200
+    success_threshold: 0.7
+
+  - id: medium
+    description: >
+      Uneven traffic volumes with pedestrian crossing requests.
+      Agent must balance throughput while handling interruptions.
+    difficulty: 2
+    episode_length: 200
+    success_threshold: 0.6
+
+  - id: hard
+    description: >
+      Peak hour congestion with emergency vehicles and time-of-day transitions.
+      Agent must clear emergency vehicles within 15 ticks while managing rush hour.
+    difficulty: 3
+    episode_length: 300
+    success_threshold: 0.5
+
+baseline_scores:
+  easy: 0.940
+  medium: 0.774
+  hard: 0.891
+  average: 0.868
+  agent: rule-based greedy agent
+
+runtime:
+  max_inference_time_minutes: 20
+  min_memory_gb: 2
+  min_vcpu: 1
