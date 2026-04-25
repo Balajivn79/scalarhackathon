@@ -1,0 +1,81 @@
+$ python train_bc.py
+PyTorch 2.11.0+cu130  device=cpu
+Feature dimension: 40
+Action classes:    9
+Loading /home/claude/new/traffic-openenv/data/training_data.jsonl.gz...
+Loaded 98,650 transitions in 2.4s
+X shape: (98650, 40), y shape: (98650,)
+Train: 88,785  Val: 9,865
+
+Train action distribution:
+  keep                  8435  ( 9.50%)
+  switch_to_N          13018  (14.66%)
+  switch_to_S          11551  (13.01%)
+  switch_to_E          14916  (16.80%)
+  switch_to_W          13004  (14.65%)
+  extend_green            50  ( 0.06%)
+  pedestrian_hold       1175  ( 1.32%)
+  bundle_NS            12499  (14.08%)
+  bundle_EW            14137  (15.92%)
+
+Model: BCPolicyNet(
+  (net): Sequential(
+    (0): Linear(in_features=40, out_features=128, bias=True)
+    (1): ReLU()
+    (2): Linear(in_features=128, out_features=64, bias=True)
+    (3): ReLU()
+    (4): Linear(in_features=64, out_features=9, bias=True)
+  )
+)
+Parameters: 14,089
+
+Class weights: {'keep': 1.17, 'switch_to_N': 0.76, 'switch_to_S': 0.85, 'switch_to_E': 0.66, 'switch_to_W': 0.76, 'extend_green': 5.0, 'pedestrian_hold': 5.0, 'bundle_NS': 0.79, 'bundle_EW': 0.7}
+
+Training for 8 epochs...
+Epoch  1/8  train_loss=1.4295  val_loss=1.0674  val_acc=0.657  (6s)
+Epoch  2/8  train_loss=0.9037  val_loss=0.8151  val_acc=0.764  (10s)
+Epoch  3/8  train_loss=0.7283  val_loss=0.7032  val_acc=0.789  (14s)
+Epoch  4/8  train_loss=0.6369  val_loss=0.6544  val_acc=0.790  (18s)
+Epoch  5/8  train_loss=0.5792  val_loss=0.5873  val_acc=0.823  (22s)
+Epoch  6/8  train_loss=0.5355  val_loss=0.5651  val_acc=0.831  (27s)
+Epoch  7/8  train_loss=0.5038  val_loss=0.5238  val_acc=0.852  (30s)
+Epoch  8/8  train_loss=0.4765  val_loss=0.5048  val_acc=0.853  (35s)
+
+Training complete in 35s
+Structured log saved to data/training_log.json
+Saved model to data/bc_model.pt
+
+Per-action validation accuracy:
+  action              support   accuracy
+  keep                    989      0.768
+  switch_to_N            1382      0.865
+  switch_to_S            1324      0.865
+  switch_to_E            1602      0.832
+  switch_to_W            1480      0.873
+  extend_green              4      0.000
+  pedestrian_hold         132      0.917
+  bundle_NS              1407      0.923
+  bundle_EW              1545      0.823
+
+Grading both policies across all 14 tasks (this takes ~30s)...
+Grading BC policy...
+Grading smart_bundle...
+
+task                         BC   smart_bundle    delta
+--------------------------------------------------------
+easy                      0.936          0.939   -0.003
+medium                    0.919          0.936   -0.017
+hard                      0.841          0.935   -0.094
+night                     0.391          0.480   -0.089
+rush_hour                 0.960          0.957   +0.003
+chaos                     0.896          0.949   -0.053
+tutorial                  0.896          0.898   -0.002
+asymmetric                0.979          0.982   -0.003
+deterministic             0.961          0.973   -0.012
+pedestrian_heavy          0.808          0.847   -0.039
+ambulance_run             0.984          0.986   -0.002
+vip_convoy                0.749          0.716   +0.033
+monsoon                   0.920          0.944   -0.024
+orchestrated_signals      0.524          0.654   -0.130
+--------------------------------------------------------
+AVERAGE                   0.840          0.871   -0.031
