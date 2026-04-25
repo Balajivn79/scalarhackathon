@@ -36,7 +36,8 @@ COPY --from=builder /install /usr/local
 # Copy application source
 COPY environment/ ./environment/
 COPY tasks/       ./tasks/
-COPY app.py       .
+RUN mkdir -p server
+COPY server/app.py ./server/app.py
 
 # .env is NOT copied — supply secrets via environment variables at runtime
 # (see docker run -e or docker-compose env_file)
@@ -61,7 +62,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 # Single-container / dev: uvicorn directly
 # For production multi-worker, override CMD with:
 #   gunicorn -w 4 -k uvicorn.workers.UvicornWorker app:app --bind 0.0.0.0:7860
-CMD ["uvicorn", "app:app", \
+CMD ["uvicorn", "server.app:app", \
      "--host", "0.0.0.0", \
      "--port", "7860", \
      "--workers", "1", \

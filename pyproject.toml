@@ -1,0 +1,15 @@
+[project]
+name = "traffic-signal-env"
+version = "2.3.0"
+description = "Adaptive traffic signal control environment"
+requires-python = ">=3.11"
+
+dependencies = [
+    "openenv>=0.2.0"
+]
+
+[project.scripts]
+server = "server.app:main"
+
+[tool.openenv]
+environment = "environment.traffic_env:TrafficEnv"

@@ -1,124 +1,240 @@
-# Traffic Signal Optimization Environment
+---
+title: Traffic Signal OpenEnv
+emoji: 🚦
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
 
-An OpenEnv-compatible reinforcement learning environment for adaptive traffic signal control at a 4-way intersection.
+# Traffic Signal OpenEnv — v2.3
 
-## Overview
+Adaptive traffic-signal environment built on [OpenEnv](https://github.com/openenv/openenv).
+A 4-way intersection where an RL agent picks signal-timing actions every tick.
 
-Traditional traffic lights use fixed timing cycles, leading to unnecessary waiting, congestion during peak hours, and poor emergency vehicle handling. This environment simulates a smart intersection where an AI agent dynamically controls signal timing to minimize congestion, reduce wait times, and prioritize emergency vehicles.
+> **What's new in v2.3:** four real-world domain scenarios with new mechanics.
+> `ambulance_run` (six scheduled emergencies with a triage burst), `vip_convoy`
+> (Z-security convoys with 8-tick anticipation requirement), `monsoon`
+> (weather reduces flow rate up to 50%), and `orchestrated_signals` (final
+> boss combining VIP + ambulance + weather + incidents). New simulator
+> mechanics: weather state with flow-rate scaling, scheduled emergency
+> queues, and VIP convoy traversal with green-corridor anticipation.
+>
+> **What was new in v2.2:** `pedestrian_heavy` (demo-improvement headroom +
+> second anti-hack target). **v2.1:** three guide-derived scenarios
+> (`tutorial`, `asymmetric`, `deterministic`). **v2.0:** robust bounded
+> reward + dynamics-driven scenarios (`night`, `rush_hour`, `chaos`).
+> See [`HACKATHON_GUIDE_DERIVATION.md`](HACKATHON_GUIDE_DERIVATION.md) and
+> [`RL_REWARD_DESIGN.md`](RL_REWARD_DESIGN.md) for details.
 
-The agent operates under realistic conditions — stochastic vehicle arrivals, pedestrian crossing requests, time-of-day transitions, and emergency vehicle preemption.
+## What changed across versions
 
-## Real-World Relevance
-
-This environment models a problem actively deployed in smart cities worldwide. Adaptive signal control systems are used in Pittsburgh, Singapore, and Amsterdam to reduce urban congestion. This environment provides a clean, reproducible testbed for evaluating agent performance on this problem.
+| Area | v1 | v2.0 | v2.1 | v2.2 | v2.3 |
+|---|---|---|---|---|---|
+| Scenarios | 3 | + 3 dynamics | + 3 guide | + 1 headroom | + 4 real-world |
+| Reward components | 6, unbounded | 9, bounded | (same) | (same) | (same; VIP folds into emergency) |
+| Per-tick reward range | spikes to -30+ | base in [-3, +3] | (same) | (same) | (same) |
+| Emergency reward | binary +10/-20 | graded continuous | (same) | (same) | + scheduled queue mode |
+| RNG | global `np.random` | per-env seedable | + scripted-arrival | (same) | + scheduled events |
+| Lane incidents | — | new (chaos) | (same) | (same) | (same) |
+| Curriculum bootstrap | — | — | new | (same) | (same) |
+| Anti-reward-hacking | — | — | new (bundle_NS) | + ped-hold | (same) |
+| Verifiable benchmark | — | — | new | (same) | (same) |
+| Adaptive-tradeoff headroom | — | — | — | new | (same) |
+| Weather mechanic | — | — | — | — | new (CLEAR/RAIN/HEAVY_RAIN) |
+| Scheduled emergencies | — | — | — | — | new |
+| VIP convoy mechanic | — | — | — | — | new (8-tick anticipation) |
 
 ## Environment Description
 
-A 4-way intersection with North, South, East, West lanes. Each tick simulates one second of real time. Vehicles arrive randomly via Poisson distribution. The agent controls which lane gets the green light and for how long.
+A 4-way intersection with North, South, East, West lanes. Each tick simulates
+one second of real time. The agent controls which lane is green and for how
+long. Default arrivals are Poisson; the `deterministic` scenario uses scripted
+arrivals.
 
-### Key Mechanics
+### Mechanics
 
-- Vehicle arrivals modeled via Poisson distribution per lane per tick
-- Flow rate of 4 cars cleared per tick on the active green lane
-- Starvation detection — lanes unserved for 60+ ticks incur penalties
-- Emergency vehicle preemption with 45 second response window
-- Pedestrian crossing requests that pause all traffic for 15 ticks
-- Time-of-day transitions (NORMAL → PEAK_HOUR → NORMAL) on hard task
-- Fairness reward component penalizes high variance across lane wait times
+- Poisson vehicle arrivals per lane per tick (default), or scripted arrivals (deterministic)
+- Flow rate: 4 cars cleared per tick on the active green lane (8 with bundle)
+- Starvation: lanes unserved for 60+ ticks incur penalties
+- Emergency vehicles: 45-second response window, graded continuous reward
+- Pedestrian crossings: pause all traffic for 15 ticks
+- Time-of-day: NIGHT / NORMAL / PEAK_HOUR with full schedule support
+- Lane incidents (v2): random closure for 20–40 ticks (chaos)
+- **Weather (v2.3): CLEAR / RAIN / HEAVY_RAIN — reduces flow rate, accelerates wait**
+- **VIP convoys (v2.3): pre-announced 8-tick lead time, multi-lane traversal**
+- **Scheduled emergencies (v2.3): deterministic ambulance schedules (vs. Poisson)**
 
 ## Observation Space
 
 | Field | Type | Description |
 |-------|------|-------------|
-| north.cars | int | Cars waiting in North lane |
-| north.avg_wait | float | Average wait time in North lane (seconds) |
-| south.cars | int | Cars waiting in South lane |
-| south.avg_wait | float | Average wait time in South lane (seconds) |
-| east.cars | int | Cars waiting in East lane |
-| east.avg_wait | float | Average wait time in East lane (seconds) |
-| west.cars | int | Cars waiting in West lane |
-| west.avg_wait | float | Average wait time in West lane (seconds) |
-| current_green | str | Currently active green lane (N/S/E/W) |
-| time_in_phase | int | Ticks elapsed in current phase |
+| north / south / east / west | object | Per-lane `{cars: int, avg_wait: float}` |
+| current_green | str | N/S/E/W |
+| time_in_phase | int | Ticks since the current phase started |
 | emergency_lane | str/null | Lane with emergency vehicle, if any |
-| pedestrian_requests | list | Lanes with pedestrian crossing requests |
-| pedestrian_active | bool | Whether pedestrian hold is active |
-| pedestrian_ticks_remaining | int | Ticks remaining in pedestrian hold |
+| pedestrian_requests | list[str] | Lanes with pending crossing requests |
+| pedestrian_active | bool | Whether a hold is currently in progress |
+| pedestrian_ticks_remaining | int | — |
 | time_of_day | str | NORMAL / PEAK_HOUR / NIGHT |
-| tick | int | Current episode tick |
+| tick | int | — |
+| **incident_lane** *(v2)* | str/null | Lane closed by an incident |
+| **incident_ticks_remaining** *(v2)* | int | — |
 
 ## Action Space
 
-| Action | Description |
-|--------|-------------|
-| keep | Hold current green light for one tick |
-| switch_to_N | Switch green light to North |
-| switch_to_S | Switch green light to South |
-| switch_to_E | Switch green light to East |
-| switch_to_W | Switch green light to West |
-| extend_green | Extend current phase cap by 10 ticks |
-| pedestrian_hold | Pause all traffic for 15 ticks for pedestrian crossing |
-| bundle_NS | Simultaneously release North and South lanes |
-| bundle_EW | Simultaneously release East and West lanes |
+`keep`, `switch_to_{N,S,E,W}`, `extend_green`, `pedestrian_hold`,
+`bundle_NS`, `bundle_EW`.
 
-## Reward Function
+## Reward Function (v2)
 
-Reward is computed every tick as a weighted sum of:
+Every component is normalized to roughly `[-1, +1]` *before* being weighted,
+so per-tick base reward sits in `[-3, +3]` (with emergency events as
+designed-large spikes).
 
-| Component | Formula | Description |
-|-----------|---------|-------------|
-| Throughput | +0.5 × cars_cleared | Reward for clearing vehicles |
-| Queue | -0.1 × total_queued | Penalty for overall congestion |
-| Max wait | -0.3 × max_lane_wait | Penalty for worst-off lane |
-| Starvation | -0.5 × starved_lanes | Penalty for lanes unserved 60+ ticks |
-| Fairness | -0.2 × variance(waits) | Penalty for unequal service |
-| Emergency | -20.0 one-time if unserved after 45s, +10.0 if cleared within 15s |
+| Component | Range | Formula |
+|---|---|---|
+| throughput | [0, +1] | `cars_cleared_this_tick / 8` |
+| queue | [-1, 0] | `-tanh(total_queued / 20)` |
+| max_wait | [-1, 0] | `-tanh(max_wait / 30)` |
+| starvation | [-1, 0] | `-starved_lanes / 4` |
+| fairness | [-1, 0] | `-tanh(stddev_wait / 15)` |
+| emergency | [-2, +2] | linear decay over 45s + sub-15s bonus |
+| switch | [-1, 0] | `-1` if agent switched lanes this tick |
+| pedestrian | [-1, +0.05] | small reward for serving / penalty for backlog |
+| progress | [-1, +1] | potential-based shaping: `Φ(s') - Φ(s)`, `Φ(s) = -total_cars` |
+
+The `progress` term is **potential-based reward shaping** (Ng, Harada &
+Russell, ICML 1999) — preserves the optimal policy while giving a dense
+per-tick learning signal.
 
 ## Tasks
 
-### Easy
-Normal traffic with steady arrival rates. Green light starts on North. Agent must keep average wait times low and prevent lane starvation.
-- Episode length: 200 ticks
-- Success threshold: 0.7
+### Original three (v1, preserved)
 
-### Medium
-Uneven traffic volumes with random pedestrian crossing requests. Requires balancing throughput against interruptions.
-- Episode length: 200 ticks
-- Success threshold: 0.6
+- **easy** — Steady normal traffic. 200 ticks. Threshold 0.7.
+- **medium** — Uneven traffic with pedestrians. 200 ticks. Threshold 0.6.
+- **hard** — Peak-hour transitions with emergencies. 300 ticks. Threshold 0.5.
 
-### Hard
-Peak hour congestion with emergency vehicle spawning and time-of-day transitions (NORMAL → PEAK_HOUR at tick 100, back to NORMAL at tick 200). Agent must respond to emergencies within 15 ticks while managing rush hour queues.
-- Episode length: 300 ticks
-- Success threshold: 0.5
+### Dynamics-driven (v2.0)
 
-## Baseline Scores
+- **night** — Low-traffic NIGHT scenario, 200 ticks. Tests minimum-intervention.
+- **rush_hour** — Sustained PEAK_HOUR for 250 ticks. Bundle actions matter.
+- **chaos** — Final boss. 400 ticks. Day cycle + lane incidents.
 
-Evaluated using a rule-based greedy agent that always serves the busiest lane and prioritizes emergencies:
+### Hackathon-guide-derived (v2.1)
 
-| Task | Score |
-|------|-------|
-| Easy | 0.940 |
-| Medium | 0.774 |
-| Hard | 0.891 |
-| **Average** | **0.868** |
+- **tutorial** *(Guide §6 curriculum)* — 150 ticks. Cars only on N (already
+  green). Even `keep` scores 0.6 — gives RL training non-zero gradient from
+  tick 1.
+- **asymmetric** *(Guide §7-8 anti-hacking)* — 200 ticks. Heavy E+W, empty
+  N+S. Catches `bundle_NS` and `always-keep` shortcuts. Adds an independent
+  `ew_service_ratio` reward signal for hack detection.
+- **deterministic** *(Guide §11 verifiable)* — 200 ticks. Scripted (non-Poisson)
+  arrivals. Optimal policy is computable. Use `deterministic_optimal_score()`
+  in `tasks/graders.py` as a regression test for the reward function.
 
-A dummy agent that never switches signals scores 0.0 on easy and hard, confirming the environment has a meaningful performance floor.
+### Headroom-driven (v2.2)
 
-## Setup Instructions
+- **pedestrian_heavy** *(Guide §19 demo-improvement)* — 200 ticks. High
+  pedestrian rate (0.20/tick, 4× medium). Tests the adaptive tradeoff between
+  serving pedestrians and clearing cars; also catches aggressive ped-hold
+  abuse with an independent ped_responsiveness signal.
 
-### Prerequisites
-- Python 3.11+
-- Conda or pip
+### Real-world domain events (v2.3)
 
-### Installation
+- **ambulance_run** — 250 ticks. Six scheduled ambulances; first three spaced
+  out for consistent response, last three in a 10-tick burst forcing triage.
+- **vip_convoy** — 250 ticks. Two Z-security convoys, each pre-announced 8
+  ticks ahead. Agent must build a green corridor before convoy arrival.
+  Tests anticipation, not reaction.
+- **monsoon** — 250 ticks. Weather schedule reduces flow rate by up to 50%
+  (HEAVY_RAIN) and accelerates wait accumulation. Tests adaptation to
+  degraded throughput conditions; bundle-aware agents win.
+- **orchestrated_signals** — 400 ticks. **Final boss.** VIP convoys + ambulance
+  bursts + monsoon weather + lane incidents + peak-hour cycle, all
+  overlapping. Tests prioritization across multiple concurrent high-priority
+  events.
+
+## Baseline Scores (3-seed mean from `benchmark.py`)
+
+### Original + dynamics scenarios (v1, v2.0)
+
+| agent | easy | medium | hard | night | rush_hr | chaos | **avg** |
+|---|---|---|---|---|---|---|---|
+| dummy (`keep`) | 0.00 | 0.29 | 0.00 | 0.30 | 0.33 | 0.11 | 0.17 |
+| round_robin | 0.00 | 0.30 | 0.00 | 0.27 | 0.52 | 0.20 | 0.21 |
+| rule_based | 0.94 | 0.88 | 0.87 | 0.48 | 0.84 | 0.90 | 0.82 |
+| smart_bundle | 0.94 | 0.89 | 0.94 | 0.54 | 0.96 | 0.94 | **0.87** |
+
+### Guide-derived + adaptive scenarios (v2.1, v2.2)
+
+| agent | tutorial | asymmetric | deterministic | pedestrian_heavy |
+|---|---|---|---|---|
+| dummy (`keep`) | **0.60** | 0.01 | 0.18 | 0.21 |
+| rule_based | 0.96 | 0.94 | 0.96 | 0.80 |
+| smart_bundle | 0.96 | **0.98** | 0.97 | **0.83** |
+| bundle_NS_cheat | 0.60 | **0.02** | 0.37 | 0.37 |
+| agg_holds_cheat | 0.96 | 0.95 | 0.96 | **0.22** |
+
+### Real-world domain scenarios (v2.3)
+
+| agent | ambulance_run | vip_convoy | monsoon | orchestrated_signals |
+|---|---|---|---|---|
+| dummy (`keep`) | 0.09 | 0.29 | 0.22 | 0.22 |
+| rule_based | **0.99** | 0.73 | 0.85 | 0.51 |
+| smart_bundle | **0.99** | 0.72 | **0.94** | **0.63** |
+
+**Five signals from these tables that judges should notice:**
+
+1. **Tutorial floor (0.60 for `dummy`)** — every agent gets a meaningful starting score, so RL training has a non-zero gradient from tick 1 (Guide §6).
+
+2. **Asymmetric anti-hack gap (0.94 vs 0.02 = 0.92)** — bundle_NS cheater is detected and punished. Catches the "shortcut" hack (Guide §7-8).
+
+3. **Pedestrian_heavy anti-hack gap (0.83 vs 0.22 = 0.61)** — independent second anti-hack signal. Two scenarios catching two independent hacks.
+
+4. **VIP convoy headroom (0.73 ceiling)** — pre-clearing a green corridor on 8-tick lead time has substantial room above the rule-based baseline. Tests anticipation, not reaction.
+
+5. **Orchestrated_signals (0.51 / 0.63 ceiling)** — the final boss. Multiple high-priority events overlap; even smart agents struggle. Massive headroom for learned policies (Guide §19 "evidence the model improved").
+
+The `night` scenario remains the best learned-agent showcase among the original tasks (rule_based 0.48 — over-switching is heavily punished). The `deterministic` scenario has a known-optimal benchmark of **0.981 (806 cars cleared)** via `deterministic_optimal_score()` — a CI regression test for reward-function drift.
+
+## Quick Start
+
 ```bash
-git clone <your-repo-url>
-cd traffic-signal-env
-conda create -n traffic-environment python=3.11
-conda activate traffic-environment
+# Build & run via Docker
+docker compose up
+
+# Or run locally
 pip install -r requirements.txt
+python -m server.app   # serves on :7860
+
+# Reset with a new scenario and seed (v2)
+curl -X POST "http://localhost:7860/reset?task=asymmetric&seed=42"
+
+# Step
+curl -X POST http://localhost:7860/step \
+     -H "Content-Type: application/json" \
+     -d '{"action": "switch_to_E"}'
+
+# List all 9 scenarios
+curl http://localhost:7860/tasks
 ```
 
-### Environment Variables
+## Files
 
-Create a `.env` file in the project root:
+```
+environment/traffic_env.py         ← simulator (v2.1)
+tasks/graders.py                   ← graders + deterministic_optimal_score()
+server/app.py                      ← FastAPI server, exposes 9 tasks
+inference.py                       ← LLM agent driver, Gemini-compatible
+benchmark.py                       ← multi-agent multi-seed comparison
+openenv.yaml                       ← OpenEnv manifest
+RL_REWARD_DESIGN.md                ← v2 reward function design doc
+HACKATHON_GUIDE_DERIVATION.md      ← v2.1 scenario derivation (this is the cheat sheet)
+```
+
+## Authors
+
+Balaji Vellineni, Sasikumar Duraisamy, Rohith Srivatsan

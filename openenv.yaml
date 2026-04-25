@@ -1,9 +1,17 @@
 name: traffic-signal-env
-version: 1.0.0
+version: 2.3.0
 description: >
   A real-world adaptive traffic signal control environment where an AI agent
-  manages a 4-way intersection by dynamically adjusting green light timing
-  to minimize congestion, reduce wait times, and prioritize emergency vehicles.
+  manages a 4-way intersection by dynamically adjusting green light timing to
+  minimize congestion, reduce wait times, and prioritize emergency vehicles.
+  v2.0 added bounded RL-friendly reward, potential-based shaping, and three
+  dynamics-driven scenarios (night, rush_hour, chaos). v2.1 added three
+  scenarios derived from the Meta OpenEnv Hackathon Help Guide: tutorial
+  (curriculum bootstrap, §6), asymmetric (anti-reward-hacking, §7-8), and
+  deterministic (verifiable rewards, §11). v2.2 added pedestrian_heavy
+  (demo-improvement headroom, §19). v2.3 adds four real-world domain scenarios
+  with new mechanics (weather, VIP convoys, scheduled emergencies):
+  ambulance_run, vip_convoy, monsoon, orchestrated_signals.
 
 author: Balaji Vellineni, Sasikumar Duraisamy, Rohith Srivatsan
 license: MIT
@@ -13,6 +21,8 @@ tags:
   - urban-computing
   - sequential-decision-making
   - emergency-response
+  - reinforcement-learning
+  - curriculum-learning
 
 environment:
   type: sequential
@@ -23,12 +33,30 @@ endpoints:
   reset:
     method: POST
     path: /reset
-    description: Initialize a new episode. Pass task as query param.
+    description: Initialize a new episode. Pass task and optional seed as query params.
     params:
       task:
         type: string
-        enum: [easy, medium, hard]
+        enum:
+          - easy
+          - medium
+          - hard
+          - night
+          - rush_hour
+          - chaos
+          - tutorial
+          - asymmetric
+          - deterministic
+          - pedestrian_heavy
+          - ambulance_run
+          - vip_convoy
+          - monsoon
+          - orchestrated_signals
         default: easy
+      seed:
+        type: integer
+        nullable: true
+        description: Optional RNG seed for reproducible runs (v2).
 
   step:
     method: POST
@@ -52,6 +80,11 @@ endpoints:
     method: GET
     path: /state
     description: Return the current environment state without advancing.
+
+  tasks:
+    method: GET
+    path: /tasks
+    description: List all available scenarios with their parameters.
 
 observation_space:
   north:
@@ -83,48 +116,231 @@ observation_space:
     type: string
     enum: [NORMAL, PEAK_HOUR, NIGHT]
   tick: integer
+  # ── v2 additions ──
+  incident_lane:
+    type: string
+    nullable: true
+    enum: [N, S, E, W]
+    description: Lane currently closed by an incident (chaos scenario).
+  incident_ticks_remaining:
+    type: integer
+    description: Ticks remaining until the incident clears.
+  # ── v2.3 additions ──
+  weather:
+    type: string
+    enum: [CLEAR, RAIN, HEAVY_RAIN]
+    description: Current weather. Reduces flow rate (RAIN -25%, HEAVY_RAIN -50%).
+  vip_eta_lane:
+    type: string
+    nullable: true
+    enum: [N, S, E, W]
+    description: Lane where VIP convoy is currently traversing or will arrive.
+  vip_eta_ticks:
+    type: integer
+    description: Ticks until VIP convoy arrives (8-tick warning).
+  vip_active:
+    type: boolean
+    description: Whether VIP convoy is currently traversing the intersection.
 
 reward_space:
   total: float
   breakdown:
-    throughput: float
-    queue: float
-    max_wait: float
-    starvation: float
-    fairness: float
-    emergency: float
+    throughput: float    # cars_cleared / 8                       → [0, +1]
+    queue: float         # -tanh(total_queued / 20)               → [-1, 0]
+    max_wait: float      # -tanh(max_wait / 30)                   → [-1, 0]
+    starvation: float    # -starved_lanes / 4                     → [-1, 0]
+    fairness: float      # -tanh(stddev_wait / 15)                → [-1, 0]
+    emergency: float     # graded continuous response             → [-2, +2]
+    switch: float        # -1 if agent switched lanes this tick   → [-1, 0]
+    pedestrian: float    # +0.05 served / -1 if backlog > 3       → [-1, +0.05]
+    progress: float      # potential-based shaping (queue change) → [-1, +1]
 
 tasks:
+  # ── Original three (v1, preserved) ──
   - id: easy
-    description: >
-      Normal traffic flow with steady vehicle arrival rates.
-      Agent must keep average wait times below 30s with no lane starvation.
+    description: Steady normal traffic. Baseline scenario.
     difficulty: 1
     episode_length: 200
     success_threshold: 0.7
 
   - id: medium
-    description: >
-      Uneven traffic volumes with pedestrian crossing requests.
-      Agent must balance throughput while handling interruptions.
+    description: Uneven traffic with pedestrian crossing requests.
     difficulty: 2
     episode_length: 200
     success_threshold: 0.6
 
   - id: hard
-    description: >
-      Peak hour congestion with emergency vehicles and time-of-day transitions.
-      Agent must clear emergency vehicles within 15 ticks while managing rush hour.
+    description: Peak-hour transitions and emergency vehicles.
     difficulty: 3
     episode_length: 300
     success_threshold: 0.5
 
+  # ── v2.0 (dynamics-driven) ──
+  - id: night
+    description: >
+      Low-traffic night scenario. Tests minimum-intervention policies — the
+      switch-cost reward heavily penalizes thrashing on tiny queues.
+    difficulty: 2
+    episode_length: 200
+    success_threshold: 0.5
+
+  - id: rush_hour
+    description: >
+      Sustained PEAK_HOUR for 250 ticks. Bundle actions become valuable.
+    difficulty: 3
+    episode_length: 250
+    success_threshold: 0.5
+
+  - id: chaos
+    description: >
+      Final boss. Full day cycle (NIGHT → NORMAL → PEAK_HOUR → NORMAL → NIGHT)
+      across 400 ticks plus random lane incidents.
+    difficulty: 4
+    episode_length: 400
+    success_threshold: 0.4
+
+  # ── v2.1 (hackathon-guide-derived) ──
+  - id: tutorial
+    description: >
+      Curriculum bootstrap (Guide §6). Cars start only on N (already green) so
+      any policy gets non-zero throughput reward from tick 1 — guarantees a
+      learning signal for early-stage RL.
+    difficulty: 0
+    episode_length: 150
+    success_threshold: 0.5
+    derived_from: hackathon_guide_section_6
+
+  - id: asymmetric
+    description: >
+      Anti-reward-hacking (Guide §7-8). Heavy E+W, near-zero N+S. Catches
+      agents that learned bundle_NS or always-keep as a shortcut. Independent
+      ew_service_ratio component prevents single-signal exploitation.
+    difficulty: 2
+    episode_length: 200
+    success_threshold: 0.5
+    derived_from: hackathon_guide_section_7_8
+
+  - id: deterministic
+    description: >
+      Verifiable-reward (Guide §11). Scripted (non-Poisson) arrivals — same
+      trajectory every run. Optimal-policy throughput is computable. Used as
+      a regression benchmark via tasks.graders.deterministic_optimal_score().
+    difficulty: 2
+    episode_length: 200
+    success_threshold: 0.5
+    derived_from: hackathon_guide_section_11
+
+  # ── v2.2 (headroom-driven) ──
+  - id: pedestrian_heavy
+    description: >
+      Demo-improvement headroom (Guide §19). High pedestrian rate forces
+      adaptive tradeoff between serving peds and clearing cars. Catches
+      a second class of reward hack (aggressive ped-holds) with an
+      independent ped_responsiveness reward signal.
+    difficulty: 2
+    episode_length: 200
+    success_threshold: 0.5
+    derived_from: hackathon_guide_section_19
+
+  # ── v2.3 (real-world domain events) ──
+  - id: ambulance_run
+    description: >
+      Six scheduled ambulances across 250 ticks. The first three are spaced
+      out (tests consistent sub-15s response); the last three arrive in a
+      10-tick burst that forces triage when only one can be served at a time.
+    difficulty: 3
+    episode_length: 250
+    success_threshold: 0.6
+
+  - id: vip_convoy
+    description: >
+      Z-security VIP convoys with 8-tick lead-time warning. Convoys traverse
+      multiple lanes in sequence; the agent must build a green corridor
+      BEFORE arrival. Tests anticipation rather than reaction.
+    difficulty: 3
+    episode_length: 250
+    success_threshold: 0.5
+
+  - id: monsoon
+    description: >
+      Heavy-rain scenario. Weather schedule reduces flow rate by up to 50%
+      and accelerates wait accumulation. Tests adaptation to degraded
+      throughput conditions; bundle-aware agents win.
+    difficulty: 3
+    episode_length: 250
+    success_threshold: 0.5
+
+  - id: orchestrated_signals
+    description: >
+      Final boss. VIP convoys + ambulance bursts + monsoon weather + lane
+      incidents + peak-hour cycle, all overlapping. Tests whether the agent
+      can prioritize multiple concurrent high-priority events.
+    difficulty: 4
+    episode_length: 400
+    success_threshold: 0.4
+
 baseline_scores:
-  easy: 0.940
-  medium: 0.774
-  hard: 0.891
-  average: 0.868
-  agent: rule-based greedy agent
+  agent: rule-based greedy agent (5-seed mean)
+  easy: 0.94
+  medium: 0.88
+  hard: 0.87
+  night: 0.46
+  rush_hour: 0.83
+  chaos: 0.90
+  tutorial: 0.97
+  asymmetric: 0.95
+  deterministic: 0.96
+  pedestrian_heavy: 0.79
+  average: 0.85
+
+baseline_scores_smart_bundle:
+  agent: bundle-aware rule-based agent (5-seed mean)
+  easy: 0.94
+  medium: 0.89
+  hard: 0.93
+  night: 0.53
+  rush_hour: 0.96
+  chaos: 0.95
+  tutorial: 0.97
+  asymmetric: 0.94
+  deterministic: 0.97
+  pedestrian_heavy: 0.85
+  average: 0.89
+
+baseline_scores_bundle_NS_cheat:
+  agent: bundle_NS cheater (5-seed mean) — used to validate `asymmetric` catches the hack
+  easy: 0.00
+  medium: 0.30
+  hard: 0.50
+  night: 0.29
+  rush_hour: 0.50
+  chaos: 0.60
+  tutorial: 0.60
+  asymmetric: 0.02   # ← scenario catches the hack: 0.93-point gap vs rule_based
+  deterministic: 0.36
+  pedestrian_heavy: 0.36
+  average: 0.36
+
+baseline_scores_aggressive_holds_cheat:
+  agent: aggressive-holds cheater (5-seed mean) — used to validate `pedestrian_heavy` catches the hack
+  easy: 0.94
+  medium: 0.51
+  hard: 0.50
+  night: 0.22
+  rush_hour: 0.51
+  chaos: 0.55
+  tutorial: 0.97
+  asymmetric: 0.91
+  deterministic: 0.96
+  pedestrian_heavy: 0.21   # ← scenario catches the hack: 0.64-point gap vs smart_bundle
+  average: 0.63
+
+deterministic_optimal_benchmark:
+  description: Regression check — known-optimal hand-tuned policy on `deterministic`.
+  policy: alternating bundle_NS / bundle_EW every 4 ticks
+  expected_score: 0.98
+  expected_total_cleared: 800
+  use: If this score drops on a future commit, the reward function drifted.
 
 runtime:
   max_inference_time_minutes: 20
