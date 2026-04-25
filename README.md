@@ -13,6 +13,15 @@ pinned: false
 Adaptive traffic-signal environment built on [OpenEnv](https://github.com/openenv/openenv).
 A 4-way intersection where an RL agent picks signal-timing actions every tick.
 
+## 🔗 Project Links
+
+- 🎬 **Video explainer (YouTube, ~7 min):** https://youtu.be/CSeLi4l6cMA
+- 🚀 **Hugging Face Space (live demo + code):** https://huggingface.co/spaces/Balajivn79/traffic-openenv/tree/main
+- 📓 **Colab Notebook (training & inference walkthrough):** https://colab.research.google.com/drive/1UqiooxQUdZxk-EFjWqWH0qB7zaZuFBjU?usp=sharing
+- 💻 **Code repository (GitHub):** https://github.com/Balajivn79/scalarhackathon
+
+> Built for the **OpenEnv RL Hackathon**, conducted by Scaler School of Technology and sponsored by Meta, Hugging Face, and PyTorch.
+
 > **What's new in v2.3:** four real-world domain scenarios with new mechanics.
 > `ambulance_run` (six scheduled emergencies with a triage burst), `vip_convoy`
 > (Z-security convoys with 8-tick anticipation requirement), `monsoon`
@@ -238,3 +247,5 @@ HACKATHON_GUIDE_DERIVATION.md      ← v2.1 scenario derivation (this is the che
 ## Authors
 
 Balaji Vellineni, Sasikumar Duraisamy, Rohith Srivatsan
+
+Built for the **OpenEnv RL Hackathon** — Scaler School of Technology, sponsored by Meta, Hugging Face, and PyTorch.
